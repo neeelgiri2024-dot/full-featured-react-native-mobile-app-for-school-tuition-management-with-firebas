@@ -1,0 +1,5 @@
+# Fastlane Appfile (iOS)
+# Set your app identifier and developer details here.
+
+app_identifier("com.example.app") # TODO: replace with your actual bundle identifier
+apple_id("dev@example.com") # TODO: replace with your Apple ID

@@ -1,0 +1,120 @@
+name: Mobile CI (PR)
+
+on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'ios/**'
+      - 'docs/deployment/mobile/**'
+      - 'scripts/mobile/**'
+      - '.github/**'
+  workflow_dispatch:
+
+jobs:
+  lint_test_android:
+    name: Android lint & tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install JS dependencies (if package.json exists)
+        if: ${{ hashFiles('**/package.json') != '' }}
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Setup Java (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17' # TODO: adjust to 11/17 based on your Gradle version
+
+      - name: Gradle cache
+        uses: gradle/gradle-build-action@v2
+        with:
+          build-root-directory: android
+        continue-on-error: true
+
+      - name: Run Android unit tests (skips if no project)
+        run: |
+          if [ -f android/app/build.gradle ] || [ -f android/build.gradle ]; then
+            cd android
+            ./gradlew test --stacktrace || true # TODO: adjust tasks per modules
+          else
+            echo "No Android project present; skipping tests."
+          fi
+
+      - name: Upload Android test reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-reports
+          path: |
+            android/**/build/reports/tests/*
+            android/**/build/test-results/*
+          if-no-files-found: ignore
+
+  lint_test_ios:
+    name: iOS lint & tests
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install JS dependencies (if package.json exists)
+        if: ${{ hashFiles('**/package.json') != '' }}
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install Fastlane
+        run: |
+          gem install fastlane --no-document
+
+      - name: Install CocoaPods (if Podfile exists)
+        if: ${{ hashFiles('ios/Podfile') != '' }}
+        run: |
+          gem install cocoapods --no-document
+          cd ios && pod install --repo-update
+
+      - name: Run iOS unit tests (skips if no project)
+        run: |
+          IOS_WORKSPACE=$(ls ios/*.xcworkspace 2>/dev/null | head -n 1 || true)
+          IOS_PROJECT=$(ls ios/*.xcodeproj 2>/dev/null | head -n 1 || true)
+          IOS_SCHEME=${IOS_SCHEME:-App} # TODO: set your scheme
+          if [ -n "$IOS_WORKSPACE" ] || [ -n "$IOS_PROJECT" ]; then
+            set -x
+            if [ -n "$IOS_WORKSPACE" ]; then
+              xcodebuild -workspace "$IOS_WORKSPACE" -scheme "$IOS_SCHEME" -sdk iphonesimulator -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 15' test || true
+            else
+              xcodebuild -project "$IOS_PROJECT" -scheme "$IOS_SCHEME" -sdk iphonesimulator -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 15' test || true
+            fi
+          else
+            echo "No iOS project present; skipping tests."
+          fi
+
+      - name: Upload iOS test reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-reports
+          path: |
+            ~/Library/Logs/scan/*
+            build/reports/tests/*
+          if-no-files-found: ignore

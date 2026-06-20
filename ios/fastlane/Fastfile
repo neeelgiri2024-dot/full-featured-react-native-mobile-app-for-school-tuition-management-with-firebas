@@ -1,0 +1,52 @@
+# Fastlane Fastfile (iOS)
+# TODO: Adjust scheme, workspace/project, and signing setup once the app source is present.
+
+default_platform(:ios)
+
+platform :ios do
+  desc "Build iOS IPA"
+  lane :build do
+    # Set these environment variables or replace with literals
+    scheme = ENV['IOS_SCHEME'] || 'App' # TODO: set your scheme
+    workspace = Dir["*.xcworkspace"].first
+    project = Dir["*.xcodeproj"].first
+
+    if workspace
+      gym(workspace: workspace, scheme: scheme, export_method: 'app-store', include_bitcode: false)
+    elsif project
+      gym(project: project, scheme: scheme, export_method: 'app-store', include_bitcode: false)
+    else
+      UI.message("No iOS workspace/project found; build skipped.")
+    end
+  end
+
+  desc "Beta distribution via TestFlight or Firebase App Distribution"
+  lane :beta do
+    # Build IPA
+    build
+
+    # Upload to TestFlight
+    # pilot(app_identifier: ENV['IOS_APP_IDENTIFIER'], distribute_external: false)
+
+    # Alternatively, use Firebase App Distribution plugin (uncomment if using)
+    # firebase_app_distribution(
+    #   app: ENV['FIREBASE_IOS_APP_ID'],
+    #   release_notes: ENV['RELEASE_NOTES'] || "Automated beta build",
+    #   testers: "qa@example.com",
+    #   ipa_path: Dir["./*.ipa"].first,
+    #   groups: "qa"
+    # )
+    UI.message("Built iOS IPA. Configure TestFlight or Firebase App Distribution to upload.")
+  end
+
+  desc "Release to App Store/TestFlight external"
+  lane :release do
+    # Ensure signing is set up (consider fastlane match)
+    build
+    deliver(
+      submit_for_review: false,
+      skip_screenshots: true,
+      skip_metadata: true
+    )
+  end
+end

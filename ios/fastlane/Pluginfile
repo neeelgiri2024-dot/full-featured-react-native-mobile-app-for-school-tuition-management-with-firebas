@@ -1,0 +1,4 @@
+# Fastlane Pluginfile (iOS)
+# Uncomment plugins you plan to use.
+
+# gem 'fastlane-plugin-firebase_app_distribution'
