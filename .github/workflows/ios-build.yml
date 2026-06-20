@@ -1,0 +1,117 @@
+name: iOS Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    name: Build iOS (IPA)
+    runs-on: macos-latest
+    if: ${{ hashFiles('ios/**') != '' && hashFiles('package.json') != '' }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      IOS_SCHEME: ${{ secrets.IOS_SCHEME }}
+      IOS_WORKSPACE: ${{ secrets.IOS_WORKSPACE }}
+      MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+      APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Install Fastlane and CocoaPods
+        run: |
+          if [ -f Gemfile ]; then
+            bundle install --path vendor/bundle
+          else
+            gem install fastlane -N
+            gem install cocoapods -N
+          fi
+
+      - name: Install JS dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Install CocoaPods
+        working-directory: ios
+        run: |
+          pod install --repo-update
+
+      - name: Configure Apple API key for Fastlane (if provided)
+        if: ${{ env.APP_STORE_CONNECT_API_KEY != '' }}
+        run: |
+          mkdir -p ~/.fastlane
+          echo "$APP_STORE_CONNECT_API_KEY" > ~/.fastlane/api_key.json
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+
+      - name: Fetch signing with match (appstore)
+        run: |
+          export FASTLANE_DISABLE_COLORS=1
+          if [ -n "$APP_STORE_CONNECT_API_KEY" ]; then
+            export APP_STORE_CONNECT_API_KEY_PATH="$HOME/.fastlane/api_key.json"
+          fi
+          fastlane match appstore --readonly --git_url "$MATCH_GIT_URL"
+
+      - name: Auto-detect workspace if not provided
+        run: |
+          if [ -z "$IOS_WORKSPACE" ]; then
+            ws=$(ls ios/*.xcworkspace | head -n1 || true)
+            if [ -z "$ws" ]; then
+              echo "No .xcworkspace found under ios/. Set IOS_WORKSPACE secret." >&2
+              exit 1
+            fi
+            echo "IOS_WORKSPACE=$ws" >> $GITHUB_ENV
+          fi
+
+      - name: Build IPA with gym
+        run: |
+          if [ -z "$IOS_SCHEME" ]; then
+            echo "IOS_SCHEME is not set. Add IOS_SCHEME secret matching your Xcode scheme." >&2
+            exit 1
+          fi
+          mkdir -p ios/build
+          fastlane gym \
+            --scheme "$IOS_SCHEME" \
+            --workspace "${IOS_WORKSPACE}" \
+            --configuration Release \
+            --export_method app-store \
+            --output_directory ios/build
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-ipa
+          path: ios/build/*.ipa
+
+      - name: Attach IPA to GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ios/build/*.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
