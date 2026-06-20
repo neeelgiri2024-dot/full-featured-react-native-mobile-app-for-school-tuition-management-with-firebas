@@ -1,0 +1,127 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function hasRole(role) {
+      return isSignedIn() && request.auth.token.role == role;
+    }
+
+    function isAdmin() { return hasRole('admin'); }
+    function isTeacher() { return hasRole('teacher'); }
+    function isStudent() { return hasRole('student'); }
+    function isParent() { return hasRole('parent'); }
+
+    function userOrg() {
+      return request.auth.token.orgId;
+    }
+
+    function isSameOrg(resource) {
+      return resource.data.orgId == userOrg();
+    }
+
+    // Users collection: users can read their own doc; admins can read/write within same org
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin() && request.resource.data.orgId == userOrg();
+    }
+
+    // Organizations: read by signed-in users in same org; write by admins only
+    match /organizations/{orgId} {
+      allow read: if isSignedIn() && orgId == userOrg();
+      allow write: if isAdmin() && orgId == userOrg();
+    }
+
+    // Classes
+    match /classes/{classId} {
+      allow read: if isSignedIn() && isSameOrg(resource);
+      allow write: if isAdmin() && isSameOrg(resource);
+    }
+
+    // Subjects
+    match /subjects/{subjectId} {
+      allow read: if isSignedIn() && isSameOrg(resource);
+      allow write: if isAdmin() && isSameOrg(resource);
+    }
+
+    // Enrollments: membership docs {orgId, classId, studentId, status}
+    match /enrollments/{enrollmentId} {
+      allow read: if isSignedIn() && isSameOrg(resource);
+      allow write: if isAdmin() && isSameOrg(resource);
+    }
+
+    // Exams
+    match /exams/{examId} {
+      allow read: if isSignedIn() && isSameOrg(resource);
+      allow write: if isAdmin() && isSameOrg(resource);
+    }
+
+    // Marks: teachers can write for their classes; students/parents read own; admins full.
+    match /marks/{markId} {
+      allow read: if isSignedIn() && isSameOrg(resource) && (
+        isAdmin() ||
+        (isStudent() && request.auth.uid == resource.data.studentId) ||
+        (isParent() && resource.data.studentId in request.auth.token.childIds)
+      );
+      allow write: if isSignedIn() && isSameOrg(resource) && (
+        isAdmin() ||
+        (isTeacher() && resource.data.teacherId == request.auth.uid)
+      );
+    }
+
+    // Attendance: teachers write for their classes; students/parents read own; admins full
+    match /attendance/{attId} {
+      allow read: if isSignedIn() && isSameOrg(resource) && (
+        isAdmin() ||
+        (isStudent() && request.auth.uid == resource.data.studentId) ||
+        (isParent() && resource.data.studentId in request.auth.token.childIds) ||
+        isTeacher()
+      );
+      allow write: if isSignedIn() && isSameOrg(resource) && (isAdmin() || isTeacher());
+    }
+
+    // Fees
+    match /fees/{feeId} {
+      allow read: if isSignedIn() && isSameOrg(resource) && (
+        isAdmin() ||
+        (isStudent() && request.auth.uid == resource.data.studentId) ||
+        (isParent() && resource.data.studentId in request.auth.token.childIds)
+      );
+      allow write: if isSignedIn() && isSameOrg(resource) && isAdmin();
+    }
+
+    // Payments (optional future): currently read by owner, write by admin
+    match /payments/{paymentId} {
+      allow read: if isSignedIn() && isSameOrg(resource) && (
+        isAdmin() || request.auth.uid == resource.data.studentId
+      );
+      allow write: if isSignedIn() && isSameOrg(resource) && isAdmin();
+    }
+
+    // Schedules: read by org; write by admin or teachers
+    match /schedules/{schedId} {
+      allow read: if isSignedIn() && isSameOrg(resource);
+      allow write: if isSignedIn() && isSameOrg(resource) && (isAdmin() || isTeacher());
+    }
+
+    // Feed: org-wide
+    match /feed/{feedId} {
+      allow read: if isSignedIn() && isSameOrg(resource);
+      allow write: if isSignedIn() && isSameOrg(resource) && (isAdmin() || isTeacher());
+    }
+
+    // Gallery: org-wide read; write by admin
+    match /gallery/{galleryId} {
+      allow read: if isSignedIn() && isSameOrg(resource);
+      allow write: if isSignedIn() && isSameOrg(resource) && isAdmin();
+    }
+
+    // Aggregates/ranks: read by org, write by functions (require admin or service accounts with role claim)
+    match /aggregates/{aggId} {
+      allow read: if isSignedIn() && isSameOrg(resource);
+      allow write: if isSignedIn() && (isAdmin() || request.auth.token.isService == true) && isSameOrg(resource);
+    }
+  }
+}

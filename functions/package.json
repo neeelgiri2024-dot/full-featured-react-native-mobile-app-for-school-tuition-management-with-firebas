@@ -1,0 +1,10 @@
+{
+  "name": "functions",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "echo Skipping functions typecheck",
+    "test": "echo Skipping functions tests"
+  }
+}

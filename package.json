@@ -1,0 +1,12 @@
+{
+  "name": "school-mono-repo",
+  "private": true,
+  "workspaces": [
+    "app",
+    "functions"
+  ],
+  "scripts": {
+    "typecheck": "npm -w app run typecheck && npm -w functions run typecheck",
+    "test:functions": "npm -w functions test"
+  }
+}
