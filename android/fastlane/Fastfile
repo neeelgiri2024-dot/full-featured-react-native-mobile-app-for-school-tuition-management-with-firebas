@@ -7,13 +7,13 @@ platform :android do
   desc "Build Android release APK/AAB"
   lane :build do
     # TODO: Adjust task to assemble desired variant (e.g., assembleRelease, bundleRelease)
-    gradle(task: "assembleRelease", project_dir: "./", print_command: true)
+    gradle(task: "assembleRelease", project_dir: "../app/android", print_command: true)
   end
 
   desc "Beta distribution via Firebase App Distribution"
   lane :beta do
     # Build
-    gradle(task: "assembleRelease", project_dir: "./", print_command: true)
+    gradle(task: "assembleRelease", project_dir: "../app/android", print_command: true)
 
     # Upload to Firebase App Distribution (enable plugin if using)
     # Uncomment and configure if you use the firebase_app_distribution plugin.
@@ -21,7 +21,7 @@ platform :android do
     #   app: ENV['FIREBASE_ANDROID_APP_ID'],
     #   release_notes: ENV['RELEASE_NOTES'] || "Automated beta build",
     #   testers: "qa@example.com", # TODO: or use groups: "qa"
-    #   apk_path: Dir["app/build/outputs/apk/release/*.apk"].first,
+    #   apk_path: Dir["../app/android/app/build/outputs/apk/release/*.apk"].first,
     #   groups: "qa"
     # )
     UI.message("Built Android release. Configure Firebase App Distribution to upload.")
@@ -30,13 +30,13 @@ platform :android do
   desc "Release to Google Play (internal/production)"
   lane :release do
     # Build AAB for Play
-    gradle(task: "bundleRelease", project_dir: "./", print_command: true)
+    gradle(task: "bundleRelease", project_dir: "../app/android", print_command: true)
 
     # Google Play upload via supply
     # Requires PLAY_JSON_PATH or json_key to be set
     supply(
       package_name: ENV['ANDROID_PACKAGE_NAME'],
-      aab: Dir["app/build/outputs/bundle/release/*.aab"].first,
+      aab: Dir["../app/android/app/build/outputs/bundle/release/*.aab"].first,
       json_key: ENV['PLAY_JSON_PATH'],
       track: ENV['PLAY_TRACK'] || 'internal',
       release_status: 'draft',

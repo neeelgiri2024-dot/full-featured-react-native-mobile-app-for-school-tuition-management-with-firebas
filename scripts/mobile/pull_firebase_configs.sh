@@ -26,10 +26,14 @@ _decode_b64() {
 
 mkdir -p android/app || true
 mkdir -p ios || true
+mkdir -p app/android/app || true
+mkdir -p app/ios || true
 
 if [ -n "${GOOGLE_SERVICES_JSON_BASE64:-}" ]; then
   echo "Writing android/app/google-services.json from GOOGLE_SERVICES_JSON_BASE64"
   _decode_b64 "${GOOGLE_SERVICES_JSON_BASE64}" "android/app/google-services.json" || echo "Failed to write google-services.json"
+  echo "Writing app/android/app/google-services.json from GOOGLE_SERVICES_JSON_BASE64"
+  _decode_b64 "${GOOGLE_SERVICES_JSON_BASE64}" "app/android/app/google-services.json" || echo "Failed to write app/android/app/google-services.json"
 else
   echo "GOOGLE_SERVICES_JSON_BASE64 not set; skipping android config"
 fi
@@ -37,6 +41,8 @@ fi
 if [ -n "${GOOGLE_SERVICE_INFO_PLIST_BASE64:-}" ]; then
   echo "Writing ios/GoogleService-Info.plist from GOOGLE_SERVICE_INFO_PLIST_BASE64"
   _decode_b64 "${GOOGLE_SERVICE_INFO_PLIST_BASE64}" "ios/GoogleService-Info.plist" || echo "Failed to write GoogleService-Info.plist"
+  echo "Writing app/ios/GoogleService-Info.plist from GOOGLE_SERVICE_INFO_PLIST_BASE64"
+  _decode_b64 "${GOOGLE_SERVICE_INFO_PLIST_BASE64}" "app/ios/GoogleService-Info.plist" || echo "Failed to write app/ios/GoogleService-Info.plist"
 else
   echo "GOOGLE_SERVICE_INFO_PLIST_BASE64 not set; skipping iOS config"
 fi

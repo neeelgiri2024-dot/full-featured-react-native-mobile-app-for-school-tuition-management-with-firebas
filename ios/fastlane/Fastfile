@@ -8,8 +8,8 @@ platform :ios do
   lane :build do
     # Set these environment variables or replace with literals
     scheme = ENV['IOS_SCHEME'] || 'App' # TODO: set your scheme
-    workspace = Dir["*.xcworkspace"].first
-    project = Dir["*.xcodeproj"].first
+    workspace = Dir["../app/ios/*.xcworkspace"].first
+    project = Dir["../app/ios/*.xcodeproj"].first
 
     if workspace
       gym(workspace: workspace, scheme: scheme, export_method: 'app-store', include_bitcode: false)

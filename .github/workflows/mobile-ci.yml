@@ -24,10 +24,17 @@ jobs:
           node-version: '18'
           cache: 'npm'
 
-      - name: Install JS dependencies (if package.json exists)
+      - name: Install JS dependencies (root + app workspace)
         if: ${{ hashFiles('**/package.json') != '' }}
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          if [ -f app/package.json ]; then
+            if [ -f app/package-lock.json ]; then
+              npm -w app ci || npm -w app install
+            else
+              npm -w app install
+            fi
+          fi
 
       - name: Setup Java (Temurin)
         uses: actions/setup-java@v4
@@ -38,16 +45,24 @@ jobs:
       - name: Gradle cache
         uses: gradle/gradle-build-action@v2
         with:
-          build-root-directory: android
+          build-root-directory: app/android
         continue-on-error: true
+
+      - name: Generate Android project if missing (Expo prebuild)
+        run: |
+          if [ ! -f app/android/gradlew ]; then
+            echo "Running Expo prebuild for Android..."
+            (cd app && npx expo prebuild --platform android --non-interactive)
+          else
+            echo "Android native project already present under app/android"
+          fi
 
       - name: Run Android unit tests (skips if no project)
         run: |
-          if [ -f android/app/build.gradle ] || [ -f android/build.gradle ]; then
-            cd android
-            ./gradlew test --stacktrace || true # TODO: adjust tasks per modules
+          if [ -f app/android/gradlew ]; then
+            (cd app/android && ./gradlew test --stacktrace || true) # TODO: adjust tasks per modules
           else
-            echo "No Android project present; skipping tests."
+            echo "No Android project present under app/android; skipping tests."
           fi
 
       - name: Upload Android test reports
@@ -56,8 +71,8 @@ jobs:
         with:
           name: android-test-reports
           path: |
-            android/**/build/reports/tests/*
-            android/**/build/test-results/*
+            app/android/**/build/reports/tests/*
+            app/android/**/build/test-results/*
           if-no-files-found: ignore
 
   lint_test_ios:
@@ -73,10 +88,17 @@ jobs:
           node-version: '18'
           cache: 'npm'
 
-      - name: Install JS dependencies (if package.json exists)
+      - name: Install JS dependencies (root + app workspace)
         if: ${{ hashFiles('**/package.json') != '' }}
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          if [ -f app/package.json ]; then
+            if [ -f app/package-lock.json ]; then
+              npm -w app ci || npm -w app install
+            else
+              npm -w app install
+            fi
+          fi
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
@@ -87,16 +109,25 @@ jobs:
         run: |
           gem install fastlane --no-document
 
+      - name: Generate iOS project if missing (Expo prebuild)
+        run: |
+          if [ -z "$(ls app/ios/*.xcworkspace 2>/dev/null || true)" ] && [ -z "$(ls app/ios/*.xcodeproj 2>/dev/null || true)" ]; then
+            echo "Running Expo prebuild for iOS..."
+            (cd app && npx expo prebuild --platform ios --non-interactive)
+          else
+            echo "iOS native project already present under app/ios"
+          fi
+
       - name: Install CocoaPods (if Podfile exists)
-        if: ${{ hashFiles('ios/Podfile') != '' }}
+        if: ${{ hashFiles('app/ios/Podfile') != '' }}
         run: |
           gem install cocoapods --no-document
-          cd ios && pod install --repo-update
+          cd app/ios && pod install --repo-update
 
       - name: Run iOS unit tests (skips if no project)
         run: |
-          IOS_WORKSPACE=$(ls ios/*.xcworkspace 2>/dev/null | head -n 1 || true)
-          IOS_PROJECT=$(ls ios/*.xcodeproj 2>/dev/null | head -n 1 || true)
+          IOS_WORKSPACE=$(ls app/ios/*.xcworkspace 2>/dev/null | head -n 1 || true)
+          IOS_PROJECT=$(ls app/ios/*.xcodeproj 2>/dev/null | head -n 1 || true)
           IOS_SCHEME=${IOS_SCHEME:-App} # TODO: set your scheme
           if [ -n "$IOS_WORKSPACE" ] || [ -n "$IOS_PROJECT" ]; then
             set -x

@@ -40,16 +40,42 @@ jobs:
           node-version: '18'
           cache: 'npm'
 
-      - name: Install JS dependencies (if package.json exists)
+      - name: Install JS dependencies (root + app workspace)
         if: ${{ hashFiles('**/package.json') != '' }}
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          if [ -f app/package.json ]; then
+            if [ -f app/package-lock.json ]; then
+              npm -w app ci || npm -w app install
+            else
+              npm -w app install
+            fi
+          fi
 
       - name: Prepare Firebase config files
         shell: bash
         run: |
           chmod +x scripts/mobile/pull_firebase_configs.sh || true
           ./scripts/mobile/pull_firebase_configs.sh
+
+      - name: Generate native project if missing (Expo prebuild)
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = "android" ]; then
+            if [ ! -f app/android/gradlew ]; then
+              echo "Running Expo prebuild for Android..."
+              (cd app && npx expo prebuild --platform android --non-interactive)
+            else
+              echo "Android native project already present under app/android"
+            fi
+          else
+            if [ -z "$(ls app/ios/*.xcworkspace 2>/dev/null || true)" ] && [ -z "$(ls app/ios/*.xcodeproj 2>/dev/null || true)" ]; then
+              echo "Running Expo prebuild for iOS..."
+              (cd app && npx expo prebuild --platform ios --non-interactive)
+            else
+              echo "iOS native project already present under app/ios"
+            fi
+          fi
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
@@ -73,9 +99,9 @@ jobs:
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          mkdir -p android/app
+          mkdir -p app/android/app
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release.keystore 2>/dev/null || echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/release.keystore 2>/dev/null || openssl base64 -d -out android/app/release.keystore <(echo "$ANDROID_KEYSTORE_BASE64") 2>/dev/null || echo "Keystore decode failed; ensure base64 is valid";
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/android/app/release.keystore 2>/dev/null || echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/android/app/release.keystore 2>/dev/null || openssl base64 -d -out app/android/app/release.keystore <(echo "$ANDROID_KEYSTORE_BASE64") 2>/dev/null || echo "Keystore decode failed; ensure base64 is valid";
           else
             echo "No ANDROID_KEYSTORE_BASE64 secret set; skipping keystore creation."
           fi
@@ -100,17 +126,17 @@ jobs:
             echo "$PLAY_JSON_BASE64" | base64 --decode > "$PLAY_JSON_PATH" 2>/dev/null || echo "$PLAY_JSON_BASE64" | base64 -d > "$PLAY_JSON_PATH" 2>/dev/null || openssl base64 -d -out "$PLAY_JSON_PATH" <(echo "$PLAY_JSON_BASE64") 2>/dev/null || echo "PLAY_JSON_BASE64 decode failed";
           fi
 
-          if [ -f android/app/build.gradle ] || [ -f android/build.gradle ]; then
-            echo "Android project detected. Running Fastlane..."
+          if [ -f app/android/gradlew ]; then
+            echo "Android project detected under app/android. Running Fastlane..."
             pushd android
             if [ "$DIST_TARGET" = "firebase" ]; then
-              fastlane beta || true # TODO: ensure lanes configured to use keystore/env
+              fastlane beta || true # Fastfile uses ../app/android
             else
               fastlane release || true
             fi
             popd
           else
-            echo "No Android project present; dry-run only."
+            echo "No Android project present under app/android; dry-run only."
           fi
 
       - name: Run Fastlane (iOS)
@@ -131,10 +157,10 @@ jobs:
             echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "$API_KEY_PATH" 2>/dev/null || echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 -d > "$API_KEY_PATH" 2>/dev/null || openssl base64 -d -out "$API_KEY_PATH" <(echo "$APP_STORE_CONNECT_API_KEY_BASE64") 2>/dev/null || echo "API key decode failed";
           fi
 
-          IOS_WORKSPACE=$(ls ios/*.xcworkspace 2>/dev/null | head -n 1 || true)
-          IOS_PROJECT=$(ls ios/*.xcodeproj 2>/dev/null | head -n 1 || true)
+          IOS_WORKSPACE=$(ls app/ios/*.xcworkspace 2>/dev/null | head -n 1 || true)
+          IOS_PROJECT=$(ls app/ios/*.xcodeproj 2>/dev/null | head -n 1 || true)
           if [ -n "$IOS_WORKSPACE" ] || [ -n "$IOS_PROJECT" ]; then
-            echo "iOS project detected. Running Fastlane..."
+            echo "iOS project detected under app/ios. Running Fastlane..."
             pushd ios
             if [ "$DIST_TARGET" = "firebase" ]; then
               fastlane beta || true
@@ -143,7 +169,7 @@ jobs:
             fi
             popd
           else
-            echo "No iOS project present; dry-run only."
+            echo "No iOS project present under app/ios; dry-run only."
           fi
 
       - name: Upload build artifacts
@@ -152,9 +178,9 @@ jobs:
         with:
           name: mobile-artifacts-${{ matrix.platform }}
           path: |
-            android/**/build/outputs/**/*.apk
-            android/**/build/outputs/**/*.aab
-            ios/**/build/**/*.ipa
+            app/android/**/build/outputs/**/*.apk
+            app/android/**/build/outputs/**/*.aab
+            app/ios/**/build/**/*.ipa
           if-no-files-found: ignore
 
       - name: Notify Slack (optional)

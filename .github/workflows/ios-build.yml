@@ -11,7 +11,7 @@ jobs:
   build-ios:
     name: Build iOS (IPA)
     runs-on: macos-latest
-    if: ${{ hashFiles('ios/**') != '' && hashFiles('package.json') != '' }}
+    if: ${{ hashFiles('app/package.json') != '' }}
     defaults:
       run:
         shell: bash
@@ -47,16 +47,32 @@ jobs:
             gem install cocoapods -N
           fi
 
-      - name: Install JS dependencies
+      - name: Install JS dependencies (root + app workspace)
         run: |
           if [ -f package-lock.json ]; then
             npm ci
           else
             npm install
           fi
+          if [ -f app/package.json ]; then
+            if [ -f app/package-lock.json ]; then
+              npm -w app ci || npm -w app install
+            else
+              npm -w app install
+            fi
+          fi
+
+      - name: Generate iOS project if missing (Expo prebuild)
+        run: |
+          if [ -z "$(ls app/ios/*.xcworkspace 2>/dev/null || true)" ] && [ -z "$(ls app/ios/*.xcodeproj 2>/dev/null || true)" ]; then
+            echo "Running Expo prebuild for iOS..."
+            (cd app && npx expo prebuild --platform ios --non-interactive)
+          else
+            echo "iOS native project already present under app/ios"
+          fi
 
       - name: Install CocoaPods
-        working-directory: ios
+        working-directory: app/ios
         run: |
           pod install --repo-update
 
@@ -79,12 +95,29 @@ jobs:
       - name: Auto-detect workspace if not provided
         run: |
           if [ -z "$IOS_WORKSPACE" ]; then
-            ws=$(ls ios/*.xcworkspace | head -n1 || true)
+            ws=$(ls app/ios/*.xcworkspace 2>/dev/null | head -n1 || true)
             if [ -z "$ws" ]; then
-              echo "No .xcworkspace found under ios/. Set IOS_WORKSPACE secret." >&2
-              exit 1
+              echo "No .xcworkspace found under app/ios/. Attempting to continue if project exists."
             fi
             echo "IOS_WORKSPACE=$ws" >> $GITHUB_ENV
+          fi
+
+      - name: Auto-detect scheme if not provided
+        run: |
+          if [ -z "$IOS_SCHEME" ]; then
+            if [ -n "$IOS_WORKSPACE" ]; then
+              scheme=$(xcodebuild -list -workspace "$IOS_WORKSPACE" 2>/dev/null | awk '/Schemes:/ {flag=1; next} /^$/ {flag=0} flag {print; exit}')
+            else
+              proj=$(ls app/ios/*.xcodeproj 2>/dev/null | head -n1 || true)
+              if [ -n "$proj" ]; then
+                scheme=$(xcodebuild -list -project "$proj" 2>/dev/null | awk '/Schemes:/ {flag=1; next} /^$/ {flag=0} flag {print; exit}')
+              fi
+            fi
+            if [ -z "$scheme" ]; then
+              echo "Failed to auto-detect IOS_SCHEME. Set IOS_SCHEME secret." >&2
+              exit 1
+            fi
+            echo "IOS_SCHEME=$scheme" >> $GITHUB_ENV
           fi
 
       - name: Build IPA with gym
@@ -93,25 +126,25 @@ jobs:
             echo "IOS_SCHEME is not set. Add IOS_SCHEME secret matching your Xcode scheme." >&2
             exit 1
           fi
-          mkdir -p ios/build
+          mkdir -p app/ios/build
           fastlane gym \
             --scheme "$IOS_SCHEME" \
             --workspace "${IOS_WORKSPACE}" \
             --configuration Release \
             --export_method app-store \
-            --output_directory ios/build
+            --output_directory app/ios/build
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release-ipa
-          path: ios/build/*.ipa
+          path: app/ios/build/*.ipa
 
       - name: Attach IPA to GitHub Release (on tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ios/build/*.ipa
+            app/ios/build/*.ipa
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

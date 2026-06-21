@@ -11,7 +11,7 @@ jobs:
   build-android:
     name: Build Android (APK + AAB)
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('android/**') != '' && hashFiles('package.json') != '' }}
+    if: ${{ hashFiles('app/package.json') != '' }}
     defaults:
       run:
         shell: bash
@@ -34,21 +34,37 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install dependencies
+      - name: Install dependencies (root + app workspace)
         run: |
           if [ -f package-lock.json ]; then
             npm ci
           else
             npm install
           fi
+          if [ -f app/package.json ]; then
+            if [ -f app/package-lock.json ]; then
+              npm -w app ci || npm -w app install
+            else
+              npm -w app install
+            fi
+          fi
+
+      - name: Generate Android project if missing (Expo prebuild)
+        run: |
+          if [ ! -f app/android/gradlew ]; then
+            echo "Running Expo prebuild for Android..."
+            (cd app && npx expo prebuild --platform android --non-interactive)
+          else
+            echo "Android native project already present under app/android"
+          fi
 
       - name: Prepare Android signing (if secrets present)
         if: ${{ env.ANDROID_SIGNING_READY == 'true' }}
         run: |
-          mkdir -p android/app
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
+          mkdir -p app/android/app
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/android/app/release.keystore
           # Append signing configs to gradle.properties (conventional names used by RN templates)
-          cat >> android/gradle.properties <<'EOF'
+          cat >> app/android/gradle.properties <<'EOF'
           MYAPP_UPLOAD_STORE_FILE=release.keystore
           MYAPP_UPLOAD_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}
           MYAPP_UPLOAD_STORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -58,31 +74,32 @@ jobs:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
       - name: Build Android App Bundle (AAB)
-        working-directory: android
+        working-directory: app/android
         run: ./gradlew :app:bundleRelease --no-daemon
 
       - name: Build Android APK
-        working-directory: android
+        working-directory: app/android
         run: ./gradlew :app:assembleRelease --no-daemon
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
           name: app-release-aab
-          path: android/app/build/outputs/bundle/release/app-release.aab
+          path: app/android/app/build/outputs/bundle/release/app-release.aab
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: app/android/app/build/outputs/apk/release/app-release.apk
 
       - name: Attach artifacts to GitHub Release (on tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            android/app/build/outputs/bundle/release/app-release.aab
-            android/app/build/outputs/apk/release/app-release.apk
+            app/android/app/build/outputs/bundle/release/app-release.aab
+            app/android/app/build/outputs/apk/release/app-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
