@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import { ExpoConfig, ConfigContext } from 'expo/config';
 
+declare const process: any;
+
 export default ({ config }: ConfigContext): ExpoConfig => {
   return {
     ...config,
