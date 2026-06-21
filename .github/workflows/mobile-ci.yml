@@ -24,8 +24,17 @@ jobs:
           node-version: '18'
           cache: 'npm'
 
+      - name: Detect JS
+        id: detect_js
+        run: |
+          if [[ -n "$(git ls-files -- '**/package.json' 2>/dev/null)" ]]; then
+            echo "has_js=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_js=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install JS dependencies (if package.json exists)
-        if: ${{ hashFiles('**/package.json') != '' }}
+        if: ${{ steps.detect_js.outputs.has_js == 'true' }}
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
@@ -73,8 +82,17 @@ jobs:
           node-version: '18'
           cache: 'npm'
 
+      - name: Detect JS
+        id: detect_js
+        run: |
+          if [[ -n "$(git ls-files -- '**/package.json' 2>/dev/null)" ]]; then
+            echo "has_js=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_js=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install JS dependencies (if package.json exists)
-        if: ${{ hashFiles('**/package.json') != '' }}
+        if: ${{ steps.detect_js.outputs.has_js == 'true' }}
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
@@ -87,8 +105,17 @@ jobs:
         run: |
           gem install fastlane --no-document
 
+      - name: Detect iOS Podfile
+        id: detect_podfile
+        run: |
+          if [[ -n "$(git ls-files -- 'ios/Podfile' 2>/dev/null)" ]]; then
+            echo "has_podfile=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_podfile=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install CocoaPods (if Podfile exists)
-        if: ${{ hashFiles('ios/Podfile') != '' }}
+        if: ${{ steps.detect_podfile.outputs.has_podfile == 'true' }}
         run: |
           gem install cocoapods --no-document
           cd ios && pod install --repo-update
