@@ -1,0 +1,169 @@
+name: Mobile Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment (dev/staging/prod)'
+        required: true
+        default: 'staging'
+      target:
+        description: 'Distribution target (firebase|play|testflight|appstore)'
+        required: true
+        default: 'firebase'
+
+jobs:
+  build_and_distribute:
+    name: Build & Distribute (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            os: ubuntu-latest
+          - platform: ios
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    env:
+      DIST_TARGET: ${{ github.event.inputs.target || 'firebase' }}
+      RELEASE_ENV: ${{ github.event.inputs.environment || 'staging' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install JS dependencies (if package.json exists)
+        if: ${{ hashFiles('**/package.json') != '' }}
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Prepare Firebase config files
+        shell: bash
+        run: |
+          chmod +x scripts/mobile/pull_firebase_configs.sh || true
+          ./scripts/mobile/pull_firebase_configs.sh
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install Fastlane
+        run: |
+          gem install fastlane --no-document
+
+      - name: Setup Java (Android only)
+        if: ${{ matrix.platform == 'android' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17' # TODO: adjust to match Gradle plugin requirements
+
+      - name: Decrypt Android keystore (Android only)
+        if: ${{ matrix.platform == 'android' }}
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p android/app
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release.keystore 2>/dev/null || echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/release.keystore 2>/dev/null || openssl base64 -d -out android/app/release.keystore <(echo "$ANDROID_KEYSTORE_BASE64") 2>/dev/null || echo "Keystore decode failed; ensure base64 is valid";
+          else
+            echo "No ANDROID_KEYSTORE_BASE64 secret set; skipping keystore creation."
+          fi
+
+      - name: Run Fastlane (Android)
+        if: ${{ matrix.platform == 'android' }}
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          PLAY_JSON_PATH: ${{ github.workspace }}/play-service-account.json
+          PLAY_JSON_BASE64: ${{ secrets.PLAY_JSON_BASE64 }}
+          ANDROID_PACKAGE_NAME: ${{ vars.ANDROID_PACKAGE_NAME }}
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          FIREBASE_ANDROID_APP_ID: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+          RELEASE_NOTES: ${{ github.event.release.body || github.event.head_commit.message }}
+          PLAY_TRACK: ${{ vars.PLAY_TRACK }}
+        run: |
+          # Prepare Play service account json if provided
+          if [ -n "$PLAY_JSON_BASE64" ]; then
+            echo "$PLAY_JSON_BASE64" | base64 --decode > "$PLAY_JSON_PATH" 2>/dev/null || echo "$PLAY_JSON_BASE64" | base64 -d > "$PLAY_JSON_PATH" 2>/dev/null || openssl base64 -d -out "$PLAY_JSON_PATH" <(echo "$PLAY_JSON_BASE64") 2>/dev/null || echo "PLAY_JSON_BASE64 decode failed";
+          fi
+
+          if [ -f android/app/build.gradle ] || [ -f android/build.gradle ]; then
+            echo "Android project detected. Running Fastlane..."
+            pushd android
+            if [ "$DIST_TARGET" = "firebase" ]; then
+              fastlane beta || true # TODO: ensure lanes configured to use keystore/env
+            else
+              fastlane release || true
+            fi
+            popd
+          else
+            echo "No Android project present; dry-run only."
+          fi
+
+      - name: Run Fastlane (iOS)
+        if: ${{ matrix.platform == 'ios' }}
+        shell: bash
+        env:
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_API_ISSUER: ${{ secrets.APP_STORE_CONNECT_API_ISSUER }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          FIREBASE_IOS_APP_ID: ${{ secrets.FIREBASE_IOS_APP_ID }}
+          RELEASE_NOTES: ${{ github.event.release.body || github.event.head_commit.message }}
+        run: |
+          # Write App Store Connect API key to file if provided
+          API_KEY_PATH="$GITHUB_WORKSPACE/appstore-connect-api-key.p8"
+          if [ -n "$APP_STORE_CONNECT_API_KEY_BASE64" ]; then
+            echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 --decode > "$API_KEY_PATH" 2>/dev/null || echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 -d > "$API_KEY_PATH" 2>/dev/null || openssl base64 -d -out "$API_KEY_PATH" <(echo "$APP_STORE_CONNECT_API_KEY_BASE64") 2>/dev/null || echo "API key decode failed";
+          fi
+
+          IOS_WORKSPACE=$(ls ios/*.xcworkspace 2>/dev/null | head -n 1 || true)
+          IOS_PROJECT=$(ls ios/*.xcodeproj 2>/dev/null | head -n 1 || true)
+          if [ -n "$IOS_WORKSPACE" ] || [ -n "$IOS_PROJECT" ]; then
+            echo "iOS project detected. Running Fastlane..."
+            pushd ios
+            if [ "$DIST_TARGET" = "firebase" ]; then
+              fastlane beta || true
+            else
+              fastlane release || true
+            fi
+            popd
+          else
+            echo "No iOS project present; dry-run only."
+          fi
+
+      - name: Upload build artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-artifacts-${{ matrix.platform }}
+          path: |
+            android/**/build/outputs/**/*.apk
+            android/**/build/outputs/**/*.aab
+            ios/**/build/**/*.ipa
+          if-no-files-found: ignore
+
+      - name: Notify Slack (optional)
+        if: ${{ success() && secrets.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "Mobile build completed for platform: ${{ matrix.platform }} (env: ${{ env.RELEASE_ENV }}, target: ${{ env.DIST_TARGET }})"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

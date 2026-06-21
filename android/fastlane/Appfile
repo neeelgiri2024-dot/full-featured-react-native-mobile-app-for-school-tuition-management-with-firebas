@@ -1,0 +1,4 @@
+# Fastlane Appfile (Android)
+# Set your package name here when available.
+
+package_name("com.example.app") # TODO: replace with your actual app package name
